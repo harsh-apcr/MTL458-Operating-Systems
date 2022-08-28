@@ -11,9 +11,12 @@
 #define MAX_CMD_SIZE 130
 #define MAX_ARG_SIZE 130
 #define MAX_NUM_ARG 50
+#define MAX_PROCESSES 2000
+#define MAX_PID_DIGITS 6
 #define read_command(buf,size,file) {fgets(buf, size, file);}
 
 const char nl = '\n';
+const char ws = ' ';
 
 /*
 signal handler for our shell
@@ -97,36 +100,32 @@ void tokenize(const char *cmd, char **left_args, char **right_args, bool *is_bck
 	}
 }
 
-// input is parsed correctly
-int mmain() {
-	const char* cmd = "identifier=value\n";
-	char* left_args[MAX_NUM_ARG];
-	char* right_args[MAX_NUM_ARG];
-	int i;
-	for(i=0;i < MAX_NUM_ARG;i++) left_args[i] = 0;
-	for(i=0;i < MAX_NUM_ARG;i++) right_args[i] = 0;
-	bool is_background = false;
-	bool is_setenv = false;
-	tokenize(cmd, left_args, right_args, &is_background, &is_setenv);
-	for(i = 0;left_args[i] != 0;i++) printf("%d %s ", i, left_args[i]);
-	printf("\n");
-	for(i = 0;right_args[i] != 0;i++) printf("%d %s ",i , right_args[i]);
-	printf("\n");
-	for(i=0;left_args[i] != 0;i++) free(left_args[i]);
-	for(i=0;right_args[i] != 0;i++) free(right_args[i]);
 
+
+
+void sigint_handler(int signum) {
+	if (signum == SIGINT) {
+		write(1, &nl, 1);
+		exit(0);
+	}
 }
 
-
-
 int main() {
+
 	
 	char cwd[MAX_PATH_SIZE];
 	char cmd[MAX_CMD_SIZE];
 	char *left_args[MAX_ARG_SIZE];
 	char *right_args[MAX_ARG_SIZE];
 	char cmd_history[5][MAX_CMD_SIZE];
+	pid_t process_list[MAX_PROCESSES];
+	int process_status_list[MAX_PROCESSES];
+	int curr_process = -1;
+	
+	signal(SIGINT, sigint_handler);
+	
 	cmd_history[0][0]=0;cmd_history[1][0]=0;cmd_history[2][0]=0;cmd_history[3][0]=0;cmd_history[4][0]=0;
+	
 	while (1) {
 		int i;
 		for(i=0;i < MAX_ARG_SIZE;i++) left_args[i] = 0;
@@ -140,6 +139,13 @@ int main() {
 		
 		// tokenize the input command into left_args and right_args
 		if (!strcmp(cmd, "exit")) exit(0);
+		int status, ret;
+		for(i = 0;i <= curr_process;i++) {
+			ret = waitpid(process_list[i], &status, WNOHANG);
+			if (ret != 0) process_status_list[i] = 1;	// stopped
+			else process_status_list[i] = 0;	// running
+		}
+		
 		
 		bool is_background = false;
 		bool is_setenv = false;
@@ -152,6 +158,24 @@ int main() {
 				fprintf(stderr, "%s command couldn't execute as fork() system call failed\n", left_args[0]);
 			} else if (pid == 0) {
 				// execute background process
+				if (!strcmp(left_args[0], "ps_history")) {
+					char process_id[MAX_PID_DIGITS];
+					for(i = 0;i <= curr_process;i++) {
+						if (process_status_list[i]) {
+							sprintf(process_id, "%d", process_list[i]);
+							write(1, process_id, strlen(process_id));
+							write(1, &ws, sizeof(char));
+							write(1, "STOPPED\n", 8 * sizeof(char));
+						}
+						if (!process_status_list[i]) {
+							sprintf(process_id, "%d", process_list[i]);
+							write(1, process_id, strlen(process_id));
+							write(1, &ws, sizeof(char));
+							write(1, "RUNNING\n", 8 * sizeof(char));
+						}
+					}
+					exit(0);
+				}
 				if (!strcmp(left_args[0], "cmd_history")) {
 					for(i = 0;cmd_history[i][0] != 0 && i < 5;i++) {
 						if (i > 0 || strcmp(cmd_history[i], "cmd_history")) {
@@ -166,6 +190,7 @@ int main() {
 					exit(1);
 				}
 			} else {
+				process_list[++curr_process] = pid;
 				signal(SIGCHLD, SIG_IGN);
 			}
 		} else if (is_setenv) {
@@ -177,6 +202,24 @@ int main() {
 			if (pid < 0) {
 				fprintf(stderr, "%s command couldn't execute as fork() system call failed\n", left_args[0]);
 			} else if (pid == 0) {
+				if (!strcmp(left_args[0], "ps_history")) {
+						char process_id[MAX_PID_DIGITS];
+						for(i = 0;i <= curr_process;i++) {
+							if (process_status_list[i]) {
+								sprintf(process_id, "%d", process_list[i]);
+								write(1, process_id, strlen(process_id));
+								write(1, &ws, sizeof(char));
+								write(1, "STOPPED\n", 8 * sizeof(char));
+							}
+							if (!process_status_list[i]) {
+								sprintf(process_id, "%d", process_list[i]);
+								write(1, process_id, strlen(process_id));
+								write(1, &ws, sizeof(char));
+								write(1, "RUNNING\n", 8 * sizeof(char));
+							}
+						}
+						exit(0);
+					}
 				if (!strcmp(left_args[0], "cmd_history")) {
 					for(i = 0;cmd_history[i][0] != 0 && i < 5;i++) {
 						if (i > 0 || strcmp(cmd_history[i], "cmd_history")) {
@@ -191,7 +234,9 @@ int main() {
 					exit(1);
 				}
 			} else {
-				wait(0);
+				process_list[++curr_process] = pid;
+				int status;
+				waitpid(pid, &status, 0);
 			}
 		} else {
 			// TODO : execute piped command
@@ -205,6 +250,24 @@ int main() {
 				close(1);
 				dup(pipefd[1]);
 				close(pipefd[1]);
+				if (!strcmp(left_args[0], "ps_history")) {
+						char process_id[MAX_PID_DIGITS];
+						for(i = 0;i <= curr_process;i++) {
+							if (process_status_list[i]) {
+								sprintf(process_id, "%d", process_list[i]);
+								write(1, process_id, strlen(process_id));
+								write(1, &ws, sizeof(char));
+								write(1, "STOPPED\n", 8 * sizeof(char));
+							}
+							if (!process_status_list[i]) {
+								sprintf(process_id, "%d", process_list[i]);
+								write(1, process_id, strlen(process_id));
+								write(1, &ws, sizeof(char));
+								write(1, "RUNNING\n", 8 * sizeof(char));
+							}
+						}
+						exit(0);
+					}
 				if (!strcmp(left_args[0], "cmd_history")) {
 					for(i = 0;cmd_history[i][0] != 0 && i < 5;i++) {
 						if (i > 0 || strcmp(cmd_history[i], "cmd_history")) {
@@ -219,6 +282,8 @@ int main() {
 					exit(1);
 				}
 			} else {
+				process_list[++curr_process] = pid1;
+				process_status_list[curr_process] = waitpid(pid1 , &status, WNOHANG) ? 1 : 0;
 				pid_t pid2 = fork();
 				if (pid2 < 0) {
 					fprintf(stderr, "%s command couldn't execute as fork() system call failed\n", right_args[0]);
@@ -228,9 +293,31 @@ int main() {
 					close(0);
 					dup(pipefd[0]);
 					close(pipefd[0]);
+					if (!strcmp(right_args[0], "ps_history")) {
+						char process_id[MAX_PID_DIGITS];
+						for(i = 0;i <= curr_process;i++) {
+							if (process_status_list[i]) {
+								sprintf(process_id, "%d", process_list[i]);
+								write(1, process_id, strlen(process_id));
+								write(1, &ws, sizeof(char));
+								write(1, "STOPPED\n", 8 * sizeof(char));
+							}
+							if (!process_status_list[i]) {
+								sprintf(process_id, "%d", process_list[i]);
+								write(1, process_id, strlen(process_id));
+								write(1, &ws, sizeof(char));
+								write(1, "RUNNING\n", 8 * sizeof(char));
+							}
+						}
+						// ps_history on right side of the pipe will not give the process status of the left side of the pipe
+						// as it could either be in running or stopped state and to check that we need to wait() in the parent for
+						// it which we don't want
+						exit(0);
+					}
+					
 					if (!strcmp(right_args[0], "cmd_history")) {
 						for(i = 0;cmd_history[i][0] != 0 && i < 5;i++) {
-							if (i > 0 || strcmp(cmd_history[i], "cmd_history")) {
+							if (i > 0 || strcmp(right_args[0], "cmd_history")) {
 								write(1, cmd_history[i], strlen(cmd_history[i]));
 								write(1, &nl, 1);
 							}
@@ -243,10 +330,12 @@ int main() {
 						exit(1);
 					}
 				} else {
+					process_list[++curr_process] = pid2;
 					close(pipefd[0]);
 					close(pipefd[1]);
+					int status;
 					// parent process waits untill all child finishes their execution
-					wait(0);wait(0);	// wait for both the processes to finish
+					waitpid(pid1, &status, 0);waitpid(pid2, &status, 0);	// wait for both the processes to finish
 				}
 			}
 		}
