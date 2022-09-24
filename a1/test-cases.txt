@@ -1,0 +1,164 @@
+test0: Test prompt
+marks: 0.5
+expected output
+"/home/ubuntu/Desktop~$" or "/home/ubuntu/Desktop~$ "
+some possible errors: forgot '$' or '~' or used "MTL458:~$ " from last year's assigment. 
+
+
+
+test1: Simple command run
+marks: 2
+input: echo namo is pm of india
+expected output: "namo is pm of india"
+some possible errors: no output after 1 second timeout
+
+
+
+test2: test long output
+marks: 1
+input: cat tmp_test_file
+where tmp_test_file contains "abcd" 1000 times. 
+expected output abcd 1000 times
+some possible errors: no output after 1 second timeout
+
+
+
+test3: test environment variables
+marks: 0.5
+input: echo $LANGUAGE
+expected output: en_IN:en (on the testing machine, may differ in yours
+some possible errors: empty output, $LANGUAGE.
+Note that LANGUAGE variable wasn't set by the user, but instead it was passed on by the parent process that created the shell.
+Each process has its own environment variables that are managed by the OS and are passed to the child processes.   
+Thus the shell should not have managed the variables on its own(for ex: by creating a local dictionary), instead it should have used 
+the OS support by calling setenv() and getenv(). 
+
+
+
+test4: Test set and get env variable
+marks: 0.5
+input:
+x=value_is_19
+echo $x
+expected output: "value_is_19"
+some possible errors: didn't replace environment variables.
+
+
+
+
+test5: test set and get multiple env variables, to be run after test4
+marks: 0.5
+input:
+x=value_is_13
+y=value_is_22
+echo $x $y
+expected output: "value_is_13 value_is_22"
+some possible errors: didn't replace environment variables, only replaced y or x, didnt overwrite old value
+
+
+
+
+test6: test piped command
+marks: 2.0
+input:
+cat txt_file | python3 py_code
+
+where txt_file has the text 
+this is test6 which tests piped commands
+
+and the file py_code has the python code
+
+x = input()
+x = "".join(list(filter(lambda x : x in ['a', 'e', 'i', 'o', 'u'], x)))
+print(x)
+
+expected output: "iieieieoa"
+some possible errors: no output, the code in py_code is printed
+
+
+test7: cmd_history
+marks: 1.0
+input
+echo c1
+echo c2
+echo c3
+eco c4
+cat nofile
+cmd_history
+
+expected output:
+cat nofile
+eco c4
+echo c3
+echo c2
+echo c1
+
+some possible errors:
+wrong sequence of history, included the last "cmd_history" in the output, printed last 4 commands instead of 5, didnt print failed/not found commands
+
+
+
+test8: Test cmd_history with pipe
+marks: 1.0
+input:
+echo c1
+echo c2
+echo c3
+echo c4
+echo c5
+cmd_history | head -2
+
+expected output:
+echo c5
+echo c4
+
+
+
+
+test9: test background command start
+marks: 0.5
+input:
+&python3 code
+echo hii
+
+where code is
+import time
+for i in range(10):
+    print(i)
+    time.sleep(1)
+
+expected output:
+the shell be able to run echo hii just after &python3 code
+the output should contain 0 1 2 ... 9
+and hii somewhere in between
+
+
+
+
+
+test10: ps_history
+marks: 0.5
+input:
+echo hi
+echo hii
+&python3 code
+ps_history
+# wait for 10 seconds
+try ps_history 5 times
+
+where code is
+import time
+for i in range(10):
+    time.sleep(1)
+
+
+expected output:
+the first ps_history should contain 
+the pids of the last two echo commands and display them as stopped. 
+it should display the pid of the python program as running. 
+
+after 10 seconds and 5 tries, the ps_history should have displayed the pid of python program as stopped
+
+possible errors:
+didnt follow the given output format, didnt display correct status(RUNNING/STOPPED) of the python code
+
