@@ -62,7 +62,8 @@ int main() {
 	assert(read_mem(p2, HEAP_BEGIN + 2) == 'd');
 
 	deallocate_pages(p2, HEAP_BEGIN, 10);
-
+	deallocate_pages(p2, HEAP_BEGIN, 10);
+	assert(error_no == ERR_SEG_FAULT);
 	print_page_table(p2); // output should atleast indicate correct protection bits for the vmem of p2.
 
 	write_mem(p2, HEAP_BEGIN + 1, 'd'); // we deallocated first 10 pages after heap_begin

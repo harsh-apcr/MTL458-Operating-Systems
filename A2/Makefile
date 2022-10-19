@@ -11,4 +11,4 @@ mmu.o: mmu.c
 	$(CC) $(CFLAGS) -c $^
 
 clean:
-	rm *.o test out.txt
+	rm *.o test
