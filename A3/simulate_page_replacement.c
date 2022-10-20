@@ -6,11 +6,21 @@
 #include <inttypes.h>
 #include <time.h>
 
+#define SEC_TO_NS(sec) ((sec)*1000000000)
+uint64_t nanos()
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+    uint64_t ns = SEC_TO_NS((uint64_t)ts.tv_sec) + (uint64_t)ts.tv_nsec;
+    return ns;
+}
+
+
 #define NPTENTRIES 1024 * 1024  // 2^20 pte per pagetable in a linear page table system
 #define VPAGE_OFFSET 12
 #define VADDR_OFFSET_MASK (1 << 12) - 1
 
-clock_t* timestamps;     // lru
+uint64_t* timestamps;     // lru
 int fifo_front;         // fifo
 int fifo_rear;          // fifo
 
@@ -67,7 +77,6 @@ int num_misses = 0;
 int num_disk_writes = 0;
 int num_drops = 0;
 
-bool output = false;
 
 void replace_page_opt() {
     uint nextaccess[NUM_PHY_PAGES];  // stores when the nearest next access after the curr_memaccess occur
@@ -76,17 +85,16 @@ void replace_page_opt() {
     memaccess_t *memaccess_itr;
     int ppn;
     int num_nextaccess = 0;
-    if (output) printf("---pages---\n");
     for(memaccess_itr = curr_memaccess + 1;memaccess_itr < final_memaccess;++memaccess_itr) {
         if (num_nextaccess == NUM_PHY_PAGES) break;
-        
-        ppn = entryptable[(memaccess_itr->va) >> VPAGE_OFFSET] >> NUM_PTFLAGS;
+        if (entryptable[(memaccess_itr->va) >> VPAGE_OFFSET] & PRESENT)
+            ppn = entryptable[(memaccess_itr->va) >> VPAGE_OFFSET] >> NUM_PTFLAGS;
+        else continue;
         if (nextaccess[ppn] == UINT32_MAX) {
             nextaccess[ppn] = memaccess_itr - curr_memaccess;
             num_nextaccess++;
         }
     }
-    if (output) {for(int i = 0;i < NUM_PHY_PAGES; i++) printf("%d\n", nextaccess[i]);}
     // populate the nearest nextaccess array
     int ppn_farthest = 0;
     uint farthest = 0;
@@ -96,15 +104,15 @@ void replace_page_opt() {
             ppn_farthest = ppn;
         }
     }
-    if (output) printf("ppn_farthest : %d, farthest : %u\n", ppn_farthest, farthest);
     // deallocate/free the new page (evicting the page)
-    int vpn_farthest = vpn_list[ppn_farthest];
+    uint vpn_farthest = vpn_list[ppn_farthest];
     alloc_pglist[ppn_farthest] = 0;
 
     is_dropped = (entryptable[vpn_farthest] & DIRTY) ? 0 : 1;
     num_disk_writes += is_dropped ? 0 : 1;
     num_drops += is_dropped ? 1 : 0;
     vpn_drop_write = vpn_farthest;
+
     // set the present bit in the pagetable to 0
     entryptable[vpn_farthest] -= PRESENT;   // if we'd written to a disk then i would also set ppn (in disk)
     num_allocpages--;
@@ -114,7 +122,7 @@ void replace_page_fifo() {
     int ppn = fifo_front;
     alloc_pglist[ppn] = 0;  // de-allocate from FREE-PAGE-LIST
     // set the present bit in pte to 0
-    int vpn = vpn_list[ppn];
+    uint vpn = vpn_list[ppn];
     entryptable[vpn] -= PRESENT;
     is_dropped = (entryptable[vpn] & DIRTY) ? 0 : 1;
     num_disk_writes += is_dropped ? 0 : 1;
@@ -125,18 +133,18 @@ void replace_page_fifo() {
 }
 
 void replace_page_lru() {
-    clock_t lru_page = clock();
+    uint64_t lru_page = nanos();
     int lru_ppn;
-    // printf("iteration : %d\n", iterations);
-
+    // printf("timestamps\n");
+    // printf("lru_page : %ld\n", lru_page);
+    for(int i=0;i<NUM_PHY_PAGES;i++) assert(lru_page >= timestamps[i]);
     for(int ppn = 0;ppn < NUM_PHY_PAGES;ppn++) {
-        // printf("%ld\n", timestamps[ppn]);
-        if (lru_page > timestamps[ppn]) {
+        // printf("timestamp[%d] : %ld\n", ppn, timestamps[ppn]);
+        if (lru_page >= timestamps[ppn]) {
             lru_ppn = ppn;
             lru_page = timestamps[ppn];
         }
     }
-
     alloc_pglist[lru_ppn] = 0;
     // also set the present bit of the mapping vpn -> ppn to 0
     int vpn = vpn_list[lru_ppn];
@@ -146,7 +154,8 @@ void replace_page_lru() {
     num_drops += is_dropped ? 1 : 0;
     vpn_drop_write = vpn;
     num_allocpages--;
-}
+}        // printf("%ld\n", timestamps[ppn]);
+
 
 void replace_page_random() {
     int ppn_to_replace = rand() % NUM_PHY_PAGES;
@@ -162,15 +171,19 @@ void replace_page_random() {
 }
 
 void replace_page_clock() {
+    assert(clock_hand < NUM_PHY_PAGES);
     int vpn = vpn_list[clock_hand];
     if (entryptable[vpn] & USE) {
         entryptable[vpn] -= USE;
         clock_hand = (clock_hand + 1) % NUM_PHY_PAGES;
         replace_page_clock();
+        return;
     }
     // entryptable[vpn] & USE == 0
-    alloc_pglist[clock_hand] = 0;
+    int ppn_to_replace = clock_hand;
     clock_hand = (clock_hand + 1) % NUM_PHY_PAGES;
+    alloc_pglist[ppn_to_replace] = 0;
+    // also set the present bit of the mapping vpn -> ppn to 0
     entryptable[vpn] -= PRESENT;
     is_dropped = (entryptable[vpn] & DIRTY) ? 0 : 1;
     num_disk_writes += is_dropped ? 0 : 1;
@@ -210,6 +223,7 @@ void page_fault(uint vaddr) {
     if (num_allocpages == NUM_PHY_PAGES) {
         // use page replacement strategy to identify a page to evict
         is_pgreplace = true;
+        vpn_read = VPN;
         replace_page(strategy);
         // num_allocpages == NUM_PHY_PAGES - 1
         goto allocate_page;
@@ -221,14 +235,15 @@ void page_fault(uint vaddr) {
             // page could be allocated either for an invalid entry
             // or for a valid entry with present-bit = 0
             vpn_read = VPN;
-            uint ppn = 0;
-            while (alloc_pglist[ppn]) // only atmost 1000 cheap iterations so not that bad
+            int ppn = 0;
+            while (ppn < NUM_PHY_PAGES && alloc_pglist[ppn]) // only atmost 1000 cheap iterations so not that bad
                 ppn += 1;
-            // alloc_pglist[ppn] == 0
+            // alloc_pglist[ppn] == 0 || ppn == NUM_PHY_PAGES
+            assert(ppn < NUM_PHY_PAGES);
             alloc_pglist[ppn] = true;   // allocate the ppn
             num_allocpages++;
             entryptable[VPN] = (ppn << NUM_PTFLAGS) + WRITE + READ + PRESENT + VALID;   // map VPN -> ppn
-            vpn_list[ppn] = VPN;
+            vpn_list[ppn] = VPN;                                                        // map ppn -> VPN
             // enqueue
             fifo_front = (fifo_front == -1) ? 0 : fifo_front;
             fifo_rear = (fifo_rear + 1) % NUM_PHY_PAGES;
@@ -248,7 +263,7 @@ uint memaccess(uint vaddr, memaccess_type t) {
             uint ppn = entryptable[VPN] >> NUM_PTFLAGS;
             entryptable[VPN] |= (t == W) ? DIRTY : 0;       // set dirty bit incase of a write access
             
-            timestamps[ppn] = clock();                      // timestamps for LRU
+            timestamps[ppn] = nanos();                      // timestamps for LRU
             entryptable[VPN] |= USE;                        // set use bit (for clock)
 
             return (ppn << VPAGE_OFFSET) + (vaddr & VADDR_OFFSET_MASK);
@@ -259,10 +274,9 @@ uint memaccess(uint vaddr, memaccess_type t) {
             page_fault(vaddr);
             if (is_verbose && is_pgreplace) {
                 if (is_dropped) {
-                    if (vpn_read == 0x40007) {output = true;printf("output set\n");}     //==================================
                     printf("Page 0x%x was read from disk, page 0x%x was dropped (it was not dirty).\n", vpn_read, vpn_drop_write);
                 } else {
-                    printf("Page 0x%x, %d was read from disk, page 0x%x was written to disk.\n", vpn_read, vpn_read, vpn_drop_write);
+                    printf("Page 0x%x was read from disk, page 0x%x was written to disk.\n", vpn_read, vpn_drop_write);
                 }
             }
             goto retry_on_pagefault;
@@ -284,10 +298,10 @@ void set_strategy(char *strat) {
 
 int main(int argc, char **argv) {
     srand(5635);
-    // if (argc != 4 && argc != 5) {
-    //     fprintf(stderr, "usage ./a.out trace.in <num_phy_page> <strategy> [-verbose]\n");
-    //     exit(1);
-    // }
+    if (argc != 4 && argc != 5) {
+        fprintf(stderr, "usage : ./a.out trace.in <num_phy_page> <strategy> [-verbose]\n");
+        exit(1);
+    }
     // argc == 4 || argc == 5
     NUM_PHY_PAGES = atoi(argv[2]);
     if (NUM_PHY_PAGES > 1000) {
@@ -297,20 +311,20 @@ int main(int argc, char **argv) {
     alloc_pglist = calloc(NUM_PHY_PAGES, sizeof(bool));    // allocated page list (initially all 0's)
     memset(entryptable, 0, NPTENTRIES * sizeof(pte_t));         // allocate 0 to pt initially
     num_allocpages = 0;
-    timestamps = malloc(NUM_PHY_PAGES * sizeof(clock_t));    // only well defined for pages that are accessed
+    timestamps = malloc(NUM_PHY_PAGES * sizeof(uint64_t));    // only well defined for pages that are accessed
     vpn_list = malloc(NUM_PHY_PAGES * sizeof(uint));
 
     fifo_front = -1;
     fifo_rear = -1;
 
     clock_hand = 0;
-    is_verbose = argc == 5 ? true : false;
+    is_verbose = argc == 5;
     set_strategy(argv[3]);
 
     char *trace_in = argv[1];
     FILE *file = fopen(trace_in, "r");
     if (file == NULL) {
-        fprintf(stderr, "file %s doesn't exists\n", trace_in);
+        fprintf(stderr, "file %s doesn't exist\n", trace_in);
         exit(1);
     }
 
