@@ -33,13 +33,13 @@ int thread_safe_rng(int min, int max) {
 char *get_dir(int jid) {
     switch(jid) {
         case 0:
-            return "South";
-        case 1:
-            return "East";
-        case 2:
             return "North";
-        case 3:
+        case 1:
             return "West";
+        case 2:
+            return "South";
+        case 3:
+            return "East";
         default:
             fprintf(stderr, "error: unexpected junction id : %d", jid);
             exit(1);
@@ -70,7 +70,7 @@ int *get_jid(char dir) {
 
 bool isdeadlock() {
     pthread_mutex_lock(&deadlk_table_lk);
-    bool res = deadlk[0] == deadlk[1] == deadlk[2] == deadlk[3] == 1;
+    bool res = deadlk[0] == 1 &&  deadlk[1] == 1 && deadlk[2] == 1 && deadlk[3] == 1;
     pthread_mutex_unlock(&deadlk_table_lk);
     return res;
 }
@@ -202,8 +202,8 @@ int main(int argc, char *argv[]) {
     }
 
     /* TODO: join with all train threads*/
-    for(int k = 0;k < num_trains;k++) 
+    for(int k = 0;k < num_trains;k++) {
         pthread_join(train_thread[k], NULL);
-
+    }
     return 0;
 }
