@@ -50,16 +50,16 @@ int *get_jid(char dir) {
     int *retval = malloc(sizeof(int));
     switch (dir) {
         case 'N':
-            *retval = 2;
-            break;
-        case 'W':
-            *retval = 3;
-            break;
-        case 'S':
             *retval = 0;
             break;
-        case 'E':
+        case 'W':
             *retval = 1;
+            break;
+        case 'S':
+            *retval = 2;
+            break;
+        case 'E':
+            *retval = 3;
             break;
         default:
             fprintf(stderr, "error: invalid direction `%c`", dir);
